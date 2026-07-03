@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="50 Challenge" />
+<title>The 50 Challenge</title>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23151513'/%3E%3Ctext x='50' y='64' font-size='46' font-family='Georgia,serif' font-weight='700' fill='%23E85D2C' text-anchor='middle'%3E50%3C/text%3E%3C/svg%3E" />
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #151513; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo, useCallback } = React;
+
+// ---------- tiny inline icon set (replaces lucide-react) ----------
+function Icon({ children, size = 18, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style}>
+      {children}
+    </svg>
+  );
+}
+const Flag = (p) => <Icon {...p}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></Icon>;
+const Plus = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
+const Minus = (p) => <Icon {...p}><line x1="5" y1="12" x2="19" y2="12"/></Icon>;
+const Check = (p) => <Icon {...p}><polyline points="20 6 9 17 4 12"/></Icon>;
+const ChevronLeft = (p) => <Icon {...p}><polyline points="15 18 9 12 15 6"/></Icon>;
+const ChevronRight = (p) => <Icon {...p}><polyline points="9 18 15 12 9 6"/></Icon>;
+const Calendar = (p) => <Icon {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></Icon>;
+const TrendingUp = (p) => <Icon {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></Icon>;
+const ListTree = (p) => <Icon {...p}><path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/><path d="M3 6v4c0 2 1 3 3 3h3"/><path d="M3 6v10"/></Icon>;
+const Trash2 = (p) => <Icon {...p}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></Icon>;
+const X = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Icon>;
+
+// ---------- constants ----------
+const TARGET = 50;
+const EXERCISES = [
+  { id: "pushups", label: "Pushups", short: "PU" },
+  { id: "squats", label: "Squats", short: "SQ" },
+];
+const ACCENT = {
+  pushups: "#E85D2C",
+  squats: "#7A8B5C",
+  knee: "#6B7A8F",
+};
+
+// ---------- date helpers ----------
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function isoToDate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+function addDays(iso, n) {
+  const d = isoToDate(iso);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function fmtDay(iso) {
+  const d = isoToDate(iso);
+  const today = todayISO();
+  const yest = addDays(today, -1);
+  if (iso === today) return "Today";
+  if (iso === yest) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+function fmtShort(iso) {
+  const d = isoToDate(iso);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function lastNDays(n, endIso) {
+  const arr = [];
+  for (let i = n - 1; i >= 0; i--) arr.push(addDays(endIso, -i));
+  return arr;
+}
+
+// ---------- storage (localStorage, works fully offline) ----------
+const STORAGE_KEY = "fifty-challenge:data";
+
+function useLog() {
+  const [log, setLog] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      setLog(raw ? JSON.parse(raw) : {});
+    } catch (e) {
+      setLog({});
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  const persist = useCallback((next) => {
+    setLog(next);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch (e) {
+      console.error("storage set failed", e);
+    }
+  }, []);
+
+  return { log, setLog: persist, loaded };
+}
+
+function uid() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function clone(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+// ---------- derived helpers ----------
+function dayTotal(log, dateIso, exId) {
+  const sets = log?.[dateIso]?.[exId] || [];
+  return sets.reduce((s, x) => s + x.reps, 0);
+}
+function daySets(log, dateIso, exId) {
+  return log?.[dateIso]?.[exId] || [];
+}
+
+// ---------- UI atoms ----------
+function SegBar({ sets, target = TARGET, height = 14 }) {
+  const total = sets.reduce((s, x) => s + x.reps, 0);
+  const scale = Math.max(total, target);
+  return (
+    <div className="segbar" style={{ height }}>
+      <div className="segbar-track">
+        {sets.map((s) => (
+          <div
+            key={s.id}
+            className="segbar-seg"
+            style={{
+              width: `${(s.reps / scale) * 100}%`,
+              background: s.knee ? ACCENT.knee : "var(--seg-color)",
+            }}
+          />
+        ))}
+      </div>
+      <div className="segbar-marker" style={{ left: `${Math.min((target / scale) * 100, 100)}%` }} />
+    </div>
+  );
+}
+
+function RingProgress({ value, target = TARGET, size = 132, stroke = 10, color }) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const pct = Math.min(value / target, 1);
+  const dash = c * pct;
+  return (
+    <svg width={size} height={size} className="ring">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--ring-track)" strokeWidth={stroke} />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        fill="none"
+        stroke={color}
+        strokeWidth={stroke}
+        strokeDasharray={`${dash} ${c - dash}`}
+        strokeLinecap="round"
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        style={{ transition: "stroke-dasharray 0.5s cubic-bezier(.4,1.6,.4,1)" }}
+      />
+      <text x="50%" y="46%" textAnchor="middle" className="ring-num" fill="var(--text)">
+        {value}
+      </text>
+      <text x="50%" y="63%" textAnchor="middle" className="ring-target" fill="var(--text-dim)">
+        / {target}
+      </text>
+    </svg>
+  );
+}
+
+// ---------- Today view ----------
+function TodayView({ log, setLog, exId, dateIso, setDateIso }) {
+  const [inputVal, setInputVal] = useState("");
+  const [knee, setKnee] = useState(false);
+  const sets = daySets(log, dateIso, exId);
+  const total = dayTotal(log, dateIso, exId);
+  const hitTarget = total >= TARGET;
+  const isToday = dateIso === todayISO();
+  const color = ACCENT[exId];
+
+  const addSet = () => {
+    const n = parseInt(inputVal, 10);
+    if (!n || n <= 0) return;
+    const next = clone(log);
+    if (!next[dateIso]) next[dateIso] = {};
+    if (!next[dateIso][exId]) next[dateIso][exId] = [];
+    next[dateIso][exId].push({ id: uid(), reps: n, knee });
+    setLog(next);
+    setInputVal("");
+    setKnee(false);
+  };
+
+  const removeSet = (setId) => {
+    const next = clone(log);
+    next[dateIso][exId] = next[dateIso][exId].filter((s) => s.id !== setId);
+    setLog(next);
+  };
+
+  const toggleKnee = (setId) => {
+    const next = clone(log);
+    next[dateIso][exId] = next[dateIso][exId].map((s) =>
+      s.id === setId ? { ...s, knee: !s.knee } : s
+    );
+    setLog(next);
+  };
+
+  return (
+    <div className="view">
+      <div className="date-nav">
+        <button className="icon-btn" onClick={() => setDateIso(addDays(dateIso, -1))} aria-label="Previous day">
+          <ChevronLeft size={20} />
+        </button>
+        <div className="date-label">
+          <Calendar size={14} style={{ opacity: 0.6 }} />
+          <span>{fmtDay(dateIso)}</span>
+        </div>
+        <button
+          className="icon-btn"
+          onClick={() => setDateIso(addDays(dateIso, 1))}
+          disabled={isToday}
+          aria-label="Next day"
+        >
+          <ChevronRight size={20} />
+        </button>
+      </div>
+
+      <div className="ring-wrap">
+        <RingProgress value={total} color={color} />
+        {hitTarget && <div className="target-badge" style={{ background: color }}>Target hit</div>}
+      </div>
+
+      <SegBar sets={sets} height={16} />
+      <style>{`:root { --seg-color: ${color}; }`}</style>
+
+      <div className="entry-row">
+        <div className="stepper">
+          <button className="icon-btn stepper-btn" onClick={() => setInputVal(String(Math.max(0, (parseInt(inputVal || "0", 10)) - 1)))}>
+            <Minus size={16} />
+          </button>
+          <input
+            className="reps-input"
+            type="number"
+            inputMode="numeric"
+            placeholder="0"
+            value={inputVal}
+            onChange={(e) => setInputVal(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addSet()}
+          />
+          <button className="icon-btn stepper-btn" onClick={() => setInputVal(String((parseInt(inputVal || "0", 10)) + 1))}>
+            <Plus size={16} />
+          </button>
+        </div>
+        <button
+          className={`flag-toggle ${knee ? "flag-active" : ""}`}
+          onClick={() => setKnee((k) => !k)}
+          aria-pressed={knee}
+          title="Mark this set as on the knees"
+        >
+          <Flag size={16} />
+          <span>Knees</span>
+        </button>
+        <button className="add-btn" style={{ background: color }} onClick={addSet}>
+          <Check size={18} />
+        </button>
+      </div>
+
+      <div className="sets-list">
+        {sets.length === 0 && <div className="empty-hint">No sets logged for this day yet.</div>}
+        {sets.map((s, i) => (
+          <div key={s.id} className="set-row">
+            <span className="set-idx">Set {i + 1}</span>
+            <span className="set-reps">{s.reps}</span>
+            <button
+              className={`flag-mini ${s.knee ? "flag-mini-active" : ""}`}
+              onClick={() => toggleKnee(s.id)}
+              title="Toggle knees flag"
+            >
+              <Flag size={13} />
+            </button>
+            <button className="delete-mini" onClick={() => removeSet(s.id)} title="Delete set">
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+        {sets.length > 0 && (
+          <div className="set-row set-row-total">
+            <span className="set-idx">Total</span>
+            <span className="set-reps">{total}</span>
+            <span style={{ width: 13 }} />
+            <span style={{ width: 13 }} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- History view ----------
+function HistoryView({ log, exId }) {
+  const [range, setRange] = useState(7);
+  const [mode, setMode] = useState("total");
+  const color = ACCENT[exId];
+  const today = todayISO();
+  const days = useMemo(() => lastNDays(range, today), [range, today]);
+
+  return (
+    <div className="view">
+      <div className="seg-control">
+        {[7, 30, 60].map((r) => (
+          <button key={r} className={`seg-opt ${range === r ? "seg-opt-active" : ""}`} onClick={() => setRange(r)}>
+            {r}d
+          </button>
+        ))}
+      </div>
+      <div className="seg-control seg-control-secondary">
+        <button className={`seg-opt ${mode === "total" ? "seg-opt-active" : ""}`} onClick={() => setMode("total")}>
+          Totals
+        </button>
+        <button className={`seg-opt ${mode === "sets" ? "seg-opt-active" : ""}`} onClick={() => setMode("sets")}>
+          Per set
+        </button>
+      </div>
+
+      <div className="history-list">
+        {[...days].reverse().map((d) => {
+          const sets = daySets(log, d, exId);
+          const total = dayTotal(log, d, exId);
+          const hit = total >= TARGET;
+          return (
+            <div key={d} className="history-row">
+              <div className="history-row-top">
+                <span className="history-date">{fmtShort(d)}{d === today ? " · Today" : ""}</span>
+                <span className="history-total" style={{ color: hit ? color : "var(--text-dim)" }}>
+                  {total}
+                  <span className="history-target-txt">/{TARGET}</span>
+                  {hit && <Check size={13} style={{ marginLeft: 4, color }} />}
+                </span>
+              </div>
+              {mode === "sets" ? (
+                sets.length > 0 ? (
+                  <div className="history-sets">
+                    {sets.map((s, i) => (
+                      <span key={s.id} className="history-chip" style={{ borderColor: s.knee ? ACCENT.knee : color, color: s.knee ? ACCENT.knee : color }}>
+                        {s.reps}
+                        {s.knee && <Flag size={10} style={{ marginLeft: 3 }} />}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="history-empty">—</div>
+                )
+              ) : (
+                <SegBar sets={sets} height={8} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <style>{`:root { --seg-color: ${color}; }`}</style>
+    </div>
+  );
+}
+
+// ---------- Progress (chart) view ----------
+function ProgressView({ log, exId }) {
+  const [range, setRange] = useState(7);
+  const color = ACCENT[exId];
+  const today = todayISO();
+  const days = useMemo(() => lastNDays(range, today), [range, today]);
+  const totals = days.map((d) => dayTotal(log, d, exId));
+  const max = Math.max(TARGET, ...totals, 1);
+  const hitCount = totals.filter((t) => t >= TARGET).length;
+  const avg = totals.length ? Math.round((totals.reduce((a, b) => a + b, 0) / totals.length) * 10) / 10 : 0;
+  const streak = useMemo(() => {
+    let s = 0;
+    let d = today;
+    while (dayTotal(log, d, exId) >= TARGET) {
+      s += 1;
+      d = addDays(d, -1);
+    }
+    return s;
+  }, [log, exId, today]);
+
+  const w = 320;
+  const h = 160;
+  const padL = 28;
+  const padB = 18;
+  const chartW = w - padL - 8;
+  const chartH = h - padB - 10;
+  const barW = Math.max(4, chartW / days.length - (range > 30 ? 1 : 4));
+
+  return (
+    <div className="view">
+      <div className="seg-control">
+        {[7, 30, 60].map((r) => (
+          <button key={r} className={`seg-opt ${range === r ? "seg-opt-active" : ""}`} onClick={() => setRange(r)}>
+            {r}d
+          </button>
+        ))}
+      </div>
+
+      <div className="stat-row">
+        <div className="stat-card">
+          <div className="stat-num" style={{ color }}>{streak}</div>
+          <div className="stat-label">day streak</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-num" style={{ color }}>{hitCount}/{days.length}</div>
+          <div className="stat-label">days hit 50</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-num" style={{ color }}>{avg}</div>
+          <div className="stat-label">avg / day</div>
+        </div>
+      </div>
+
+      <div className="chart-card">
+        <svg width="100%" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="chart-svg">
+          <line
+            x1={padL}
+            x2={w - 4}
+            y1={10 + chartH - (TARGET / max) * chartH}
+            y2={10 + chartH - (TARGET / max) * chartH}
+            stroke="var(--text-dim)"
+            strokeDasharray="3,3"
+            strokeWidth="1"
+          />
+          <text x={4} y={10 + chartH - (TARGET / max) * chartH + 3} className="chart-axis-label" fill="var(--text-dim)">
+            50
+          </text>
+          {totals.map((t, i) => {
+            const bh = (t / max) * chartH;
+            const x = padL + i * (chartW / days.length) + (chartW / days.length - barW) / 2;
+            const y = 10 + chartH - bh;
+            return (
+              <rect
+                key={days[i]}
+                x={x}
+                y={y}
+                width={barW}
+                height={Math.max(bh, t > 0 ? 2 : 0)}
+                rx={barW > 6 ? 2 : 1}
+                fill={t >= TARGET ? color : "var(--bar-under)"}
+              />
+            );
+          })}
+        </svg>
+        <div className="chart-x-labels">
+          <span>{fmtShort(days[0])}</span>
+          <span>{fmtShort(days[days.length - 1])}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- App shell ----------
+function App() {
+  const { log, setLog, loaded } = useLog();
+  const [dateIso, setDateIso] = useState(todayISO());
+  const [tab, setTab] = useState("today");
+  const [exIndex, setExIndex] = useState(0);
+  const [exercisesEnabled, setExercisesEnabled] = useState(["pushups"]);
+  const [showAddExercise, setShowAddExercise] = useState(false);
+
+  const exId = exercisesEnabled[exIndex] || "pushups";
+
+  if (!loaded || !log) {
+    return (
+      <div className="app-shell loading-shell">
+        <div className="loading-text">Loading…</div>
+        <Styles />
+      </div>
+    );
+  }
+
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="brand">
+          <span className="brand-num">50</span>
+          <span className="brand-text">THE 50 CHALLENGE</span>
+        </div>
+        <div className="ex-tabs">
+          {exercisesEnabled.map((id, i) => {
+            const meta = EXERCISES.find((e) => e.id === id);
+            return (
+              <button
+                key={id}
+                className={`ex-tab ${i === exIndex ? "ex-tab-active" : ""}`}
+                style={i === exIndex ? { borderColor: ACCENT[id], color: ACCENT[id] } : {}}
+                onClick={() => setExIndex(i)}
+              >
+                {meta.label}
+              </button>
+            );
+          })}
+          {exercisesEnabled.length < EXERCISES.length && (
+            <button className="ex-tab ex-tab-add" onClick={() => setShowAddExercise(true)}>
+              <Plus size={14} />
+            </button>
+          )}
+        </div>
+      </header>
+
+      <main className="app-main">
+        {tab === "today" && (
+          <TodayView log={log} setLog={setLog} exId={exId} dateIso={dateIso} setDateIso={setDateIso} />
+        )}
+        {tab === "history" && <HistoryView log={log} exId={exId} />}
+        {tab === "progress" && <ProgressView log={log} exId={exId} />}
+      </main>
+
+      <nav className="tab-bar">
+        <button className={`tab-btn ${tab === "today" ? "tab-btn-active" : ""}`} onClick={() => setTab("today")}>
+          <Check size={20} />
+          <span>Today</span>
+        </button>
+        <button className={`tab-btn ${tab === "history" ? "tab-btn-active" : ""}`} onClick={() => setTab("history")}>
+          <ListTree size={20} />
+          <span>History</span>
+        </button>
+        <button className={`tab-btn ${tab === "progress" ? "tab-btn-active" : ""}`} onClick={() => setTab("progress")}>
+          <TrendingUp size={20} />
+          <span>Progress</span>
+        </button>
+      </nav>
+
+      {showAddExercise && (
+        <div className="modal-backdrop" onClick={() => setShowAddExercise(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <span>Add exercise</span>
+              <button className="icon-btn" onClick={() => setShowAddExercise(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            {EXERCISES.filter((e) => !exercisesEnabled.includes(e.id)).map((e) => (
+              <button
+                key={e.id}
+                className="modal-option"
+                style={{ borderColor: ACCENT[e.id] }}
+                onClick={() => {
+                  setExercisesEnabled((prev) => [...prev, e.id]);
+                  setExIndex(exercisesEnabled.length);
+                  setShowAddExercise(false);
+                }}
+              >
+                <span style={{ color: ACCENT[e.id] }}>{e.label}</span>
+                <Plus size={16} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Styles />
+    </div>
+  );
+}
+
+function Styles() {
+  return (
+    <style>{`
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      :root {
+        --bg: #151513;
+        --bg-elev: #1D1D1A;
+        --text: #F2EFE9;
+        --text-dim: #8C8A82;
+        --border: #2C2C28;
+        --ring-track: #262622;
+        --bar-under: #3A3934;
+      }
+      body { background: var(--bg); }
+      .app-shell {
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", sans-serif;
+        display: flex;
+        flex-direction: column;
+        max-width: 480px;
+        margin: 0 auto;
+        position: relative;
+      }
+      .loading-shell { align-items: center; justify-content: center; }
+      .loading-text { color: var(--text-dim); font-size: 14px; letter-spacing: 0.04em; }
+
+      .app-header {
+        padding: 20px 20px 12px;
+        border-bottom: 1px solid var(--border);
+        position: sticky;
+        top: 0;
+        background: var(--bg);
+        z-index: 5;
+      }
+      .brand { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
+      .brand-num {
+        font-family: "Georgia", serif;
+        font-weight: 700;
+        font-size: 28px;
+        letter-spacing: -0.02em;
+        color: var(--text);
+      }
+      .brand-text {
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        color: var(--text-dim);
+        font-weight: 600;
+      }
+      .ex-tabs { display: flex; gap: 8px; }
+      .ex-tab {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text-dim);
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      .ex-tab-active { background: rgba(255,255,255,0.04); }
+      .ex-tab-add { width: 32px; padding: 6px; display: flex; align-items: center; justify-content: center; }
+
+      .app-main { flex: 1; overflow-y: auto; padding-bottom: 84px; }
+      .view { padding: 20px; display: flex; flex-direction: column; gap: 18px; }
+
+      .date-nav { display: flex; align-items: center; justify-content: space-between; }
+      .date-label { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; }
+      .icon-btn {
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        color: var(--text);
+        width: 36px; height: 36px;
+        border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .icon-btn:disabled { opacity: 0.3; }
+
+      .ring-wrap { display: flex; flex-direction: column; align-items: center; position: relative; padding: 8px 0; }
+      .ring { display: block; }
+      .ring-num { font-family: "Georgia", serif; font-size: 34px; font-weight: 700; }
+      .ring-target { font-size: 13px; font-weight: 600; }
+      .target-badge {
+        margin-top: 8px;
+        color: #151513;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        padding: 4px 12px;
+        border-radius: 20px;
+        text-transform: uppercase;
+      }
+
+      .segbar { position: relative; width: 100%; }
+      .segbar-track {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        border-radius: 6px;
+        overflow: hidden;
+        background: var(--ring-track);
+      }
+      .segbar-seg { height: 100%; border-right: 1.5px solid var(--bg); }
+      .segbar-seg:last-child { border-right: none; }
+      .segbar-marker {
+        position: absolute;
+        top: -3px;
+        bottom: -3px;
+        width: 2px;
+        background: var(--text);
+        opacity: 0.5;
+      }
+
+      .entry-row { display: flex; gap: 8px; align-items: center; }
+      .stepper {
+        display: flex;
+        align-items: center;
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        flex: 1;
+        overflow: hidden;
+      }
+      .stepper-btn { background: transparent; border: none; border-radius: 0; }
+      .reps-input {
+        flex: 1;
+        background: transparent;
+        border: none;
+        color: var(--text);
+        font-size: 20px;
+        font-weight: 700;
+        text-align: center;
+        width: 100%;
+        outline: none;
+        font-family: "Georgia", serif;
+      }
+      .reps-input::-webkit-outer-spin-button, .reps-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+      .flag-toggle {
+        display: flex; align-items: center; gap: 5px;
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        color: var(--text-dim);
+        padding: 0 12px;
+        height: 44px;
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .flag-active { color: ${ACCENT.knee}; border-color: ${ACCENT.knee}; background: rgba(107,122,143,0.12); }
+
+      .add-btn {
+        width: 44px; height: 44px;
+        border-radius: 10px;
+        border: none;
+        color: #151513;
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .sets-list { display: flex; flex-direction: column; gap: 1px; background: var(--border); border-radius: 10px; overflow: hidden; }
+      .set-row {
+        display: flex; align-items: center; gap: 10px;
+        background: var(--bg-elev);
+        padding: 10px 14px;
+        font-size: 14px;
+      }
+      .set-idx { color: var(--text-dim); font-size: 12px; font-weight: 600; width: 46px; }
+      .set-reps { font-family: "Georgia", serif; font-weight: 700; font-size: 16px; flex: 1; }
+      .flag-mini, .delete-mini {
+        background: transparent; border: none; color: var(--text-dim);
+        width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+        border-radius: 6px;
+      }
+      .flag-mini-active { color: ${ACCENT.knee}; }
+      .set-row-total { background: rgba(255,255,255,0.03); }
+      .set-row-total .set-idx { color: var(--text); }
+      .empty-hint { padding: 16px; text-align: center; color: var(--text-dim); font-size: 13px; background: var(--bg-elev); border-radius: 10px; }
+
+      .seg-control { display: flex; gap: 6px; }
+      .seg-control-secondary { margin-top: -8px; }
+      .seg-opt {
+        background: var(--bg-elev);
+        border: 1px solid var(--border);
+        color: var(--text-dim);
+        padding: 7px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        flex: 1;
+      }
+      .seg-opt-active { background: rgba(255,255,255,0.06); color: var(--text); border-color: rgba(255,255,255,0.2); }
+
+      .history-list { display: flex; flex-direction: column; gap: 10px; }
+      .history-row { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+      .history-row-top { display: flex; justify-content: space-between; align-items: center; }
+      .history-date { font-size: 13px; color: var(--text-dim); font-weight: 600; }
+      .history-total { font-family: "Georgia", serif; font-weight: 700; font-size: 16px; display: flex; align-items: center; }
+      .history-target-txt { font-family: -apple-system, sans-serif; font-size: 11px; color: var(--text-dim); font-weight: 600; margin-left: 2px; }
+      .history-sets { display: flex; flex-wrap: wrap; gap: 6px; }
+      .history-chip { border: 1px solid; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; display: flex; align-items: center; }
+      .history-empty { color: var(--text-dim); font-size: 12px; }
+
+      .stat-row { display: flex; gap: 8px; }
+      .stat-card { flex: 1; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; padding: 12px 8px; text-align: center; }
+      .stat-num { font-family: "Georgia", serif; font-weight: 700; font-size: 22px; }
+      .stat-label { font-size: 10.5px; color: var(--text-dim); font-weight: 600; margin-top: 2px; letter-spacing: 0.02em; }
+
+      .chart-card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; padding: 14px 10px 6px; }
+      .chart-svg { display: block; }
+      .chart-axis-label { font-size: 9px; font-weight: 600; }
+      .chart-x-labels { display: flex; justify-content: space-between; padding: 4px 8px 0; font-size: 11px; color: var(--text-dim); font-weight: 600; }
+
+      .tab-bar {
+        position: fixed;
+        bottom: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 100%;
+        max-width: 480px;
+        display: flex;
+        background: var(--bg-elev);
+        border-top: 1px solid var(--border);
+        padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+      }
+      .tab-btn {
+        flex: 1;
+        display: flex; flex-direction: column; align-items: center; gap: 3px;
+        background: transparent; border: none;
+        color: var(--text-dim);
+        font-size: 10.5px;
+        font-weight: 600;
+        padding: 4px 0;
+      }
+      .tab-btn-active { color: var(--text); }
+
+      .modal-backdrop {
+        position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+        display: flex; align-items: flex-end; justify-content: center;
+        z-index: 20;
+      }
+      .modal-card {
+        background: var(--bg-elev);
+        width: 100%; max-width: 480px;
+        border-radius: 16px 16px 0 0;
+        padding: 18px 16px max(18px, env(safe-area-inset-bottom));
+        display: flex; flex-direction: column; gap: 10px;
+        border-top: 1px solid var(--border);
+      }
+      .modal-head { display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+      .modal-option {
+        background: transparent;
+        border: 1px solid;
+        border-radius: 10px;
+        padding: 12px 14px;
+        display: flex; justify-content: space-between; align-items: center;
+        font-weight: 600;
+        font-size: 14px;
+      }
+
+      input[type=number] { -moz-appearance: textfield; }
+    `}</style>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
